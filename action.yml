@@ -1,0 +1,81 @@
+name: 'Gemini PR Reviewer'
+description: 'Automated AI code review for GitHub pull requests with exponential backoff and multi-model fallback.'
+branding:
+  icon: 'code'
+  color: 'blue'
+
+inputs:
+  gemini-api-key:
+    description: 'Google AI Studio Gemini API Key'
+    required: true
+  github-token:
+    description: 'GitHub token for posting review comments'
+    required: false
+    default: ${{ github.token }}
+  primary-model:
+    description: 'Primary Gemini model to use'
+    required: false
+    default: 'gemini-3.8-flash'
+  fallback-model:
+    description: 'Fallback Gemini model to use if primary is busy/unavailable'
+    required: false
+    default: 'gemini-2.5-flash'
+  max-retries:
+    description: 'Maximum number of retry attempts per model on transient 503/429'
+    required: false
+    default: '6'
+  retry-delay:
+    description: 'Base delay in seconds between retries'
+    required: false
+    default: '25'
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Google GenAI SDK
+      shell: bash
+      run: pip install google-genai
+
+    - name: Generate PR Diff
+      shell: bash
+      run: |
+        git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
+
+    - name: Run Gemini Code Review
+      shell: bash
+      env:
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        GEMINI_MODEL: ${{ inputs.primary-model }}
+        GEMINI_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+        GEMINI_MAX_RETRIES: ${{ inputs.max-retries }}
+        GEMINI_RETRY_DELAY: ${{ inputs.retry-delay }}
+        DIFF_FILE: pr_diff.txt
+      run: python ${{ github.action_path }}/gemini_review.py
+
+    - name: Post Review Comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        ACTION=$(cat review_action.txt 2>/dev/null || echo "comment")
+        if [ "$ACTION" = "approve" ]; then
+          echo "Review outcome: APPROVE"
+          gh pr review ${{ github.event.pull_request.number }} -F review_output.md --approve || \
+          gh pr review ${{ github.event.pull_request.number }} -F review_output.md --comment
+        elif [ "$ACTION" = "request-changes" ]; then
+          echo "Review outcome: REQUEST_CHANGES"
+          gh pr review ${{ github.event.pull_request.number }} -F review_output.md --request-changes || \
+          gh pr review ${{ github.event.pull_request.number }} -F review_output.md --comment
+        else
+          echo "Review outcome: COMMENT (neutral)"
+          gh pr review ${{ github.event.pull_request.number }} -F review_output.md --comment
+        fi
