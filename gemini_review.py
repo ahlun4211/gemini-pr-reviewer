@@ -157,7 +157,7 @@ def main():
                 else:
                     print(f"Exhausted retries on {current_model}.")
 
-        if success:
+        if success or (review_text and not is_transient_busy_error(err_str)):
             break
         elif model_idx < len(candidate_models) - 1:
             print(f"Switching to fallback model: {candidate_models[model_idx + 1]}...")
