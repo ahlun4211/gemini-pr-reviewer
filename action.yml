@@ -19,15 +19,15 @@ inputs:
   fallback-model:
     description: 'Fallback Gemini model to use if primary is busy/unavailable'
     required: false
-    default: 'gemini-2.5-flash'
+    default: 'gemini-3.8-flash-lite'
   max-retries:
     description: 'Maximum number of retry attempts per model on transient 503/429'
     required: false
-    default: '6'
+    default: '3'
   retry-delay:
     description: 'Base delay in seconds between retries'
     required: false
-    default: '25'
+    default: '20'
   python-version:
     description: 'Python version to use'
     required: false

@@ -61,9 +61,9 @@ def main():
         sys.exit(1)
 
     primary_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-    fallback_model = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-    max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "10"))
-    base_delay = int(os.environ.get("GEMINI_RETRY_DELAY", "30"))
+    fallback_model = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash-lite")
+    max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "3"))
+    base_delay = int(os.environ.get("GEMINI_RETRY_DELAY", "20"))
     diff_path = os.environ.get("DIFF_FILE", "pr_diff.txt")
 
     if not os.path.exists(diff_path):
