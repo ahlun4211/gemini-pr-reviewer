@@ -61,8 +61,8 @@ def main():
         sys.exit(1)
 
     primary_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-    fallback_model = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash-lite")
-    max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "3"))
+    fallback_model = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "4"))
     base_delay = int(os.environ.get("GEMINI_RETRY_DELAY", "20"))
     diff_path = os.environ.get("DIFF_FILE", "pr_diff.txt")
 
@@ -127,7 +127,7 @@ def main():
         print(f"Attempting review with model: {current_model}")
 
         # Distribute retries between models: primary gets most retries, fallback gets remaining
-        model_retries = max(2, max_retries // len(candidate_models)) if len(candidate_models) > 1 else max_retries
+        model_retries = max(1, max_retries // len(candidate_models)) if len(candidate_models) > 1 else max_retries
 
         for attempt in range(1, model_retries + 1):
             print(f"[{attempt}/{model_retries}] Sending diff to {current_model} via Google AI Studio...")
@@ -155,9 +155,9 @@ def main():
                     )
                     time.sleep(delay)
                 else:
-                    print(f"Exhausted retries on {current_model}.")
+                    print(f"Exhausted retries on {current_model} ({e}).")
 
-        if success or (review_text and not is_transient_busy_error(err_str)):
+        if success or review_text:
             break
         elif model_idx < len(candidate_models) - 1:
             print(f"Switching to fallback model: {candidate_models[model_idx + 1]}...")

@@ -2,7 +2,7 @@
 
 A robust, enterprise-grade GitHub Action for automated AI code reviews on Pull Requests powered by **Google Gemini via Google AI Studio**.
 
-Includes automatic **exponential backoff retry** for busy spikes (`503 UNAVAILABLE` / `429 RESOURCE_EXHAUSTED`) and **multi-model fallback** (e.g. `gemini-3.8-flash` $\to$ `gemini-3.8-flash-lite`).
+Includes automatic **exponential backoff retry** for busy spikes (`503 UNAVAILABLE` / `429 RESOURCE_EXHAUSTED`) and **multi-model fallback** (e.g. `gemini-3.8-flash` $\to$ `gemini-2.5-flash-lite`).
 
 ---
 
@@ -35,7 +35,7 @@ jobs:
         with:
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
           primary-model: 'gemini-3.8-flash'
-          fallback-model: 'gemini-3.8-flash-lite'
+          fallback-model: 'gemini-2.5-flash-lite'
           max-retries: '3'
 ```
 
@@ -48,7 +48,7 @@ jobs:
 | `gemini-api-key` | Google AI Studio Gemini API Key | N/A | **Yes** |
 | `github-token` | GitHub Token for posting review comments | `${{ github.token }}` | No |
 | `primary-model` | Primary model to query | `gemini-3.8-flash` | No |
-| `fallback-model` | Model to fall back to when primary is congested | `gemini-3.8-flash-lite` | No |
+| `fallback-model` | Model to fall back to when primary is congested | `gemini-2.5-flash-lite` | No |
 | `max-retries` | Max retry attempts per model before failover | `3` | No |
 | `retry-delay` | Base backoff delay in seconds | `20` | No |
 | `python-version` | Python runtime version | `3.11` | No |
