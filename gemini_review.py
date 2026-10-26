@@ -33,8 +33,8 @@ def is_transient_busy_error(err_str: str) -> bool:
     )
 
 
-def run_gh_command(args: list[str]) -> str | None:
-    """Runs a GitHub CLI command and returns stdout if successful, or None on error."""
+def run_gh_command(args: list[str]) -> tuple[str | None, str]:
+    """Runs a GitHub CLI command and returns (stdout, stderr). stdout is None on error."""
     try:
         result = subprocess.run(
             ["gh"] + args,
@@ -43,10 +43,14 @@ def run_gh_command(args: list[str]) -> str | None:
             check=True,
             timeout=30,
         )
-        return result.stdout.strip()
+        return result.stdout.strip(), ""
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        print(f"Warning: gh command {' '.join(args)} failed (exit {e.returncode}): {stderr or e}")
+        return None, stderr
     except Exception as e:
         print(f"Warning: gh command {' '.join(args)} failed: {e}")
-        return None
+        return None, str(e)
 
 
 def fetch_pr_context(repo: str, pr_number: str) -> dict:
@@ -76,7 +80,7 @@ def fetch_pr_context(repo: str, pr_number: str) -> dict:
         return context
 
     # 2. Query gh pr view (with closingIssuesReferences first, then fallback without it)
-    out = run_gh_command(
+    out, _ = run_gh_command(
         [
             "pr",
             "view",
@@ -88,7 +92,7 @@ def fetch_pr_context(repo: str, pr_number: str) -> dict:
         ]
     )
     if out is None:
-        out = run_gh_command(
+        out, _ = run_gh_command(
             [
                 "pr",
                 "view",
@@ -117,7 +121,7 @@ def fetch_pr_context(repo: str, pr_number: str) -> dict:
 
 
 def extract_linked_issue_numbers(pr_context: dict) -> list[int]:
-    """Extracts candidate linked issue numbers from closingIssuesReferences and PR title/body."""
+    """Extracts candidate linked issue numbers from closingIssuesReferences, PR title/body, and branch name."""
     issue_numbers: list[int] = []
 
     def add_num(n: int):
@@ -129,27 +133,47 @@ def extract_linked_issue_numbers(pr_context: dict) -> list[int]:
         if isinstance(ref, dict) and isinstance(ref.get("number"), int):
             add_num(ref["number"])
 
-    # 2. Parse PR title and body for issue references (#123 or .../issues/123)
+    # 2. Parse PR title and body for issue references
     text_to_scan = f"{pr_context.get('title', '')}\n{pr_context.get('body', '')}"
 
-    for match in re.finditer(r"github\.com/[^/\s]+/[^/\s]+/issues/(\d+)", text_to_scan):
+    # Full GitHub issue URLs: https://github.com/owner/repo/issues/70
+    for match in re.finditer(r"github\.com/[^/\s]+/[^/\s]+/issues/(\d+)", text_to_scan, re.IGNORECASE):
         add_num(int(match.group(1)))
 
-    for match in re.finditer(r"(?:^|[\s(\[/:])#(\d+)\b", text_to_scan):
+    # Keyword + optional '#' + number: "Implements Issue #70", "Issue 70", "Fixes #70", "Closes #70", "Resolves #70"
+    for match in re.finditer(
+        r"\b(?:issue|implements(?:\s+issue)?|close[sd]?|fix(?:e[sd])?|resolve[sd]?|ref(?:erence)?s?)\s*:?\s*#?(\d+)\b",
+        text_to_scan,
+        re.IGNORECASE,
+    ):
+        add_num(int(match.group(1)))
+
+    # Standalone #70 anywhere in title or body
+    for match in re.finditer(r"(?:^|[\s(\[/:—–-])#(\d+)\b", text_to_scan):
+        add_num(int(match.group(1)))
+
+    # 3. Parse branch name (e.g., "feat/issue-70-executive-briefings", "issue-70", "fix/70-bug")
+    branch_name = pr_context.get("headRefName") or ""
+    for match in re.finditer(r"(?:issue[-_/]|^(?:feat|fix|bugfix|hotfix|chore)/#?)(\d+)\b", branch_name, re.IGNORECASE):
         add_num(int(match.group(1)))
 
     return issue_numbers
 
 
-def fetch_issue_details(repo: str, issue_numbers: list[int]) -> list[dict]:
-    """Fetches the original issue specification (title, body, labels, comments) for each linked issue."""
+def fetch_issue_details(repo: str, issue_numbers: list[int]) -> tuple[list[dict], bool]:
+    """
+    Fetches the original issue specification (title, body, labels, comments) for each linked issue.
+    Returns (issues_list, permission_denied_flag).
+    """
     if not repo or not issue_numbers:
-        return []
+        return [], False
 
     issues: list[dict] = []
+    permission_denied = False
+
     for num in issue_numbers:
         # Try gh issue view (GraphQL - automatically excludes PRs)
-        out = run_gh_command(
+        out, err1 = run_gh_command(
             [
                 "issue",
                 "view",
@@ -169,14 +193,14 @@ def fetch_issue_details(repo: str, issue_numbers: list[int]) -> list[dict]:
                 print(f"Warning: Failed to parse gh issue view for #{num}: {e}")
 
         # Fallback to REST API if GraphQL failed
-        rest_out = run_gh_command(["api", f"repos/{repo}/issues/{num}"])
+        rest_out, err2 = run_gh_command(["api", f"repos/{repo}/issues/{num}"])
         if rest_out:
             try:
                 rest_data = json.loads(rest_out)
                 # Ensure it's an actual issue and not a pull request
                 if "pull_request" not in rest_data:
                     comments_list = []
-                    comments_out = run_gh_command(["api", f"repos/{repo}/issues/{num}/comments"])
+                    comments_out, _ = run_gh_command(["api", f"repos/{repo}/issues/{num}/comments"])
                     if comments_out:
                         try:
                             raw_comments = json.loads(comments_out)
@@ -199,10 +223,28 @@ def fetch_issue_details(repo: str, issue_numbers: list[int]) -> list[dict]:
                             "comments": comments_list,
                         }
                     )
+                    continue
             except Exception as e:
                 print(f"Warning: Failed to parse REST issue #{num}: {e}")
 
-    return issues
+        combined_err = f"{err1} {err2}".lower()
+        if any(
+            perm_err in combined_err
+            for perm_err in [
+                "resource not accessible by integration",
+                "http 403",
+                "403",
+                "insufficient_scopes",
+                "forbidden",
+            ]
+        ):
+            permission_denied = True
+            print(
+                f"Notice: Issue #{num} is referenced in the PR, but GITHUB_TOKEN lacks 'issues: read' permission "
+                f"to fetch its details from {repo}."
+            )
+
+    return issues, permission_denied
 
 
 def has_bypass_keyword(pr_context: dict, bypass_keyword: str) -> bool:
@@ -345,14 +387,20 @@ def main():
     pr_context = fetch_pr_context(repo, pr_number)
     bypass_active = has_bypass_keyword(pr_context, bypass_keyword)
     candidate_issue_nums = extract_linked_issue_numbers(pr_context)
-    linked_issues = fetch_issue_details(repo, candidate_issue_nums)
+    linked_issues, issue_perm_denied = fetch_issue_details(repo, candidate_issue_nums)
 
-    missing_issue_strict = (len(linked_issues) == 0) and (not bypass_active)
+    has_verified_or_PermBlocked_issue = (len(linked_issues) > 0) or (len(candidate_issue_nums) > 0 and issue_perm_denied)
+    missing_issue_strict = (not has_verified_or_PermBlocked_issue) and (not bypass_active)
     prior_missing_count = count_prior_missing_issue_reviews(pr_context.get("reviews", []))
     unlinked_review_count = prior_missing_count + 1 if missing_issue_strict else 0
 
     if linked_issues:
         print(f"Found linked original issue(s): {[i.get('number') for i in linked_issues]}")
+    elif candidate_issue_nums and issue_perm_denied:
+        print(
+            f"Detected linked issue reference(s) {candidate_issue_nums}, but workflow GITHUB_TOKEN lacked "
+            f"'issues: read' permission to fetch full issue text. Proceeding without missing-issue penalty."
+        )
     elif bypass_active:
         print(f"No linked issue found, but '{bypass_keyword}' is present in PR description. Bypassing strict issue check.")
     else:
@@ -371,6 +419,17 @@ def main():
             "   - Development agents or developers may misinterpret the original issue and write a PR description that matches their flawed implementation. You must verify the code diff directly against the original issue requirements and comments.\n"
             "   - Include a dedicated '#### 📋 Issue Requirements Checklist' section in your review that lists every feature, requirement, and acceptance criterion from the original issue(s) and marks each as `✅ Implemented`, `⚠️ Partial`, or `❌ Missing / Misinterpreted`.\n"
             "   - If ANY requirement from the original issue is missing, only partially implemented, or misinterpreted, you MUST output `[CHANGES_REQUESTED]`."
+        )
+    elif candidate_issue_nums and issue_perm_denied:
+        issue_refs_str = ", ".join(f"#{n}" for n in candidate_issue_nums)
+        issue_context_block = (
+            f"PR explicitly links to Issue {issue_refs_str}, though full issue body could not be fetched because the "
+            f"PR branch's workflow permissions did not yet include `issues: read`."
+        )
+        issue_rule = (
+            f"1. Completeness (Linked to Issue {issue_refs_str}):\n"
+            "   - The developer HAS linked the issue (`" + issue_refs_str + "`). Do NOT penalize for missing issue link.\n"
+            "   - Verify that all features and acceptance criteria described in the PR for this issue are completely implemented in the diff."
         )
     elif bypass_active:
         issue_context_block = (
