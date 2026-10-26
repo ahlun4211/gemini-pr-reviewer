@@ -32,6 +32,10 @@ inputs:
     description: 'Python version to use'
     required: false
     default: '3.11'
+  bypass-keyword:
+    description: 'Keyword in PR description to bypass strict linked-issue requirement'
+    required: false
+    default: 'BYPASS-LINK-ISSUE'
 
 runs:
   using: 'composite'
@@ -59,6 +63,10 @@ runs:
         GEMINI_MAX_RETRIES: ${{ inputs.max-retries }}
         GEMINI_RETRY_DELAY: ${{ inputs.retry-delay }}
         DIFF_FILE: pr_diff.txt
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BYPASS_KEYWORD: ${{ inputs.bypass-keyword }}
       run: python ${{ github.action_path }}/gemini_review.py
 
     - name: Post Review Comment
