@@ -67,6 +67,7 @@ The reviewer automatically detects linked issues from any of the following forma
 | `fallback-model` | Model to fall back to when primary is congested | `gemini-2.5-flash` | No |
 | `max-retries` | Max retry attempts per model before failover | `3` | No |
 | `retry-delay` | Base backoff delay in seconds | `20` | No |
+| `client-timeout` | Timeout in seconds for Gemini API requests (fails fast on dropped sockets) | `120` | No |
 | `python-version` | Python runtime version | `3.11` | No |
 | `bypass-keyword` | Keyword in PR description to bypass strict issue requirement | `BYPASS-LINK-ISSUE` | No |
 
@@ -80,9 +81,9 @@ The reviewer automatically detects linked issues from any of the following forma
    - Generates a structured **📋 Issue Requirements Checklist** verifying every requirement and acceptance criterion (`✅ Implemented`, `⚠️ Partial`, `❌ Missing / Misinterpreted`).
    - **Strict Linking Policy**: If no issue is linked, the reviewer requests changes (`[CHANGES_REQUESTED]`) and reminds the developer to link the issue. If the issue is still not linked after 2 reviews, the reviewer shares the `BYPASS-LINK-ISSUE` keyword for legitimate issue-less PRs (e.g., quick chores or hotfixes).
 2. **Multi-Model Fallback**:
-   When high demand causes `503 UNAVAILABLE` or `429` rate limits on the primary model, the action automatically fails over to the fallback model.
-3. **Exponential Backoff**:
-   Transient spikes are handled smoothly with increasing backoff delays instead of failing the build immediately.
+   When high demand causes `503 UNAVAILABLE`, `429` rate limits, or network connection failures on the primary model, the action automatically fails over to the fallback model.
+3. **Exponential Backoff & Network Resilience**:
+   Transient spikes, server socket disconnects (`Server disconnected without sending a response`), and timeouts are classified as transient and handled smoothly with increasing backoff delays instead of failing the build immediately. A configurable client-side timeout prevents stalled connections from hanging GitHub Actions runs.
 4. **Smart Review Actions**:
    Inspects the model's recommendation and issues native GitHub review outcomes:
    - `[APPROVED]` $\to$ `--approve`

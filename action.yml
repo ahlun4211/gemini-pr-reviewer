@@ -28,6 +28,10 @@ inputs:
     description: 'Base delay in seconds between retries'
     required: false
     default: '20'
+  client-timeout:
+    description: 'Timeout in seconds for Gemini API requests'
+    required: false
+    default: '120'
   python-version:
     description: 'Python version to use'
     required: false
@@ -62,6 +66,7 @@ runs:
         GEMINI_FALLBACK_MODEL: ${{ inputs.fallback-model }}
         GEMINI_MAX_RETRIES: ${{ inputs.max-retries }}
         GEMINI_RETRY_DELAY: ${{ inputs.retry-delay }}
+        GEMINI_TIMEOUT_SECONDS: ${{ inputs.client-timeout }}
         DIFF_FILE: pr_diff.txt
         GH_TOKEN: ${{ inputs.github-token }}
         GITHUB_REPOSITORY: ${{ github.repository }}

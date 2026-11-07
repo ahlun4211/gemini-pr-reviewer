@@ -13,12 +13,13 @@ from google.genai import types
 MISSING_ISSUE_MARKER = "<!-- gemini-pr-reviewer:missing-issue -->"
 
 
-def is_transient_busy_error(err_str: str) -> bool:
-    """Checks if the exception indicates transient capacity / high demand / rate limits."""
+def is_transient_error(err_str: str) -> bool:
+    """Checks if the exception indicates transient capacity, rate limits, or network/socket disconnects."""
     lowered = err_str.lower()
     return any(
         indicator in lowered
         for indicator in [
+            # Capacity & rate limits
             "503",
             "unavailable",
             "high demand",
@@ -29,8 +30,27 @@ def is_transient_busy_error(err_str: str) -> bool:
             "temporarily unavailable",
             "quota exceeded",
             "rate limit",
+            # Socket & network transient disconnects
+            "disconnected",
+            "connection reset",
+            "connection refused",
+            "connection error",
+            "remote end closed",
+            "broken pipe",
+            "timed out",
+            "timeout",
+            "deadline exceeded",
+            "deadline_exceeded",
+            "eof occurred",
+            "socket",
+            "econnreset",
+            "econnrefused",
         ]
     )
+
+
+# Alias for backwards compatibility
+is_transient_busy_error = is_transient_error
 
 
 def run_gh_command(args: list[str]) -> tuple[str | None, str]:
@@ -359,6 +379,7 @@ def main():
     fallback_model = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
     max_retries = int(os.environ.get("GEMINI_MAX_RETRIES", "3"))
     base_delay = int(os.environ.get("GEMINI_RETRY_DELAY", "20"))
+    timeout_seconds = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", "120"))
     diff_path = os.environ.get("DIFF_FILE", "pr_diff.txt")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     pr_number = os.environ.get("PR_NUMBER", "")
@@ -486,7 +507,10 @@ def main():
     ```
     """
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=timeout_seconds * 1000),
+    )
 
     # Candidate models: try primary, then fallback
     candidate_models = [primary_model]
@@ -496,6 +520,7 @@ def main():
     review_text = ""
     used_model = primary_model
     success = False
+    last_error: Exception | None = None
 
     for model_idx, current_model in enumerate(candidate_models):
         used_model = current_model
@@ -511,37 +536,34 @@ def main():
                 success = True
                 break
             except Exception as e:
+                last_error = e
                 err_str = str(e)
-                if not is_transient_busy_error(err_str):
+                if not is_transient_error(err_str):
                     print(f"Non-transient error on {current_model}: {e}")
-                    review_text = (
-                        f"> [!WARNING]\n"
-                        f"> Automated AI review encountered an error ({e}). "
-                        f"Please proceed with manual review."
-                    )
                     break
 
                 # If transient error and still have retries on this model
                 if attempt < model_retries:
                     delay = min(base_delay * attempt, 90)
                     print(
-                        f"{current_model} is currently busy / experiencing high demand. "
+                        f"{current_model} encountered transient error ({e}). "
                         f"Waiting {delay}s before retry ({attempt}/{model_retries})..."
                     )
                     time.sleep(delay)
                 else:
-                    print(f"Exhausted retries on {current_model}.")
+                    print(f"Exhausted {model_retries} retries on {current_model}.")
 
-        if success or (review_text and not is_transient_busy_error(err_str)):
+        if success:
             break
         elif model_idx < len(candidate_models) - 1:
             print(f"Switching to fallback model: {candidate_models[model_idx + 1]}...")
 
-    if not success and not review_text:
+    if not success:
+        err_msg = f" ({last_error})" if last_error else ""
         review_text = (
             f"> [!WARNING]\n"
             f"> Automated AI review temporarily unavailable after testing "
-            f"models ({', '.join(candidate_models)}). Please proceed with manual review."
+            f"models ({', '.join(candidate_models)}){err_msg}. Please proceed with manual review."
         )
 
     # Enforce strict missing-issue policy deterministically if no issue is linked and not bypassed
