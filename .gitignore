@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*$py.class
+pr_diff.txt
+review_output.md
+review_action.txt
