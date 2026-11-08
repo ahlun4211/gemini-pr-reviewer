@@ -486,7 +486,7 @@ def main():
     ```
     """
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
 
     # Candidate models: try primary, then fallback
     candidate_models = [primary_model]
